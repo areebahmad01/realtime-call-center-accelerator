@@ -23,19 +23,18 @@ class AcsCaller:
         self.source_number = source_number
         self.acs_connection_string = acs_connection_string
         self.acs_callback_path = acs_callback_path
+
         base_url = os.environ.get("PUBLIC_BASE_URL")
 
         if not base_url:
             raise ValueError("PUBLIC_BASE_URL not set")
 
-        websocket_url = f"{base_url}{acs_media_streaming_websocket_path}"
+        self.websocket_url = f"{base_url}{acs_media_streaming_websocket_path}"
 
-        print("ACS Media Streaming URL:", websocket_url)
-
-       
+        print("ACS Media Streaming URL:", self.websocket_url)
 
         self.media_streaming_configuration = MediaStreamingOptions(
-            transport_url=websocket_url,
+            transport_url=self.websocket_url,
             transport_type=MediaStreamingTransportType.WEBSOCKET,
             content_type=MediaStreamingContentType.AUDIO,
             audio_channel_type=MediaStreamingAudioChannelType.MIXED,
@@ -43,7 +42,6 @@ class AcsCaller:
             enable_bidirectional=True,
             audio_format=AudioFormat.PCM16_K_MONO
         )
-        print(f"Media streaming websocket URL: {websocket_url}")
     
     async def initiate_call(self, target_number: str):
         self.call_automation_client = CallAutomationClient.from_connection_string(self.acs_connection_string)
@@ -96,7 +94,7 @@ class AcsCaller:
             # EventGrid sends events in an array
             for event_dict in event_data:
                 print(f"Processing event: {event_dict}")
-                event = EventGridEvent.from_dict(event_dict)
+                event_type = event_dict.get("eventType") or event_dict.get("type")
                 
                 if event.event_type == "Microsoft.Communication.IncomingCall":
                     print(f"Incoming call event data: {event.data}")
