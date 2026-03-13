@@ -23,13 +23,16 @@ class AcsCaller:
         self.source_number = source_number
         self.acs_connection_string = acs_connection_string
         self.acs_callback_path = acs_callback_path
-
         base_url = os.environ.get("PUBLIC_BASE_URL")
 
-        if base_url:
-            websocket_url = f"{base_url}{acs_media_streaming_websocket_path}"
-        else:
-            websocket_url = acs_media_streaming_websocket_path
+        if not base_url:
+            raise ValueError("PUBLIC_BASE_URL not set")
+
+        websocket_url = f"{base_url}{acs_media_streaming_websocket_path}"
+
+        print("ACS Media Streaming URL:", websocket_url)
+
+       
 
         self.media_streaming_configuration = MediaStreamingOptions(
             transport_url=websocket_url,
