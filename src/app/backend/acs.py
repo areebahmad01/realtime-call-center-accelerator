@@ -26,7 +26,10 @@ class AcsCaller:
 
         base_url = os.environ.get("PUBLIC_BASE_URL")
 
-        websocket_url = acs_media_streaming_websocket_path
+        if base_url:
+            websocket_url = f"{base_url}{acs_media_streaming_websocket_path}"
+        else:
+            websocket_url = acs_media_streaming_websocket_path
 
         self.media_streaming_configuration = MediaStreamingOptions(
             transport_url=websocket_url,
@@ -37,7 +40,7 @@ class AcsCaller:
             enable_bidirectional=True,
             audio_format=AudioFormat.PCM16_K_MONO
         )
-    
+        print(f"Media streaming websocket URL: {websocket_url}")
     
     async def initiate_call(self, target_number: str):
         self.call_automation_client = CallAutomationClient.from_connection_string(self.acs_connection_string)
