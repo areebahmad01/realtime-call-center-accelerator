@@ -1,6 +1,7 @@
 from aiohttp import web
 from azure.core.messaging import CloudEvent
 from azure.eventgrid import EventGridEvent
+import os
 from azure.communication.callautomation import (
     CallAutomationClient,
     PhoneNumberIdentifier,
@@ -19,23 +20,24 @@ class AcsCaller:
 
     def __init__(self, source_number:str, acs_connection_string: str, acs_callback_path: str, acs_media_streaming_websocket_path: str):
 
-    self.source_number = source_number
-    self.acs_connection_string = acs_connection_string
-    self.acs_callback_path = acs_callback_path
+        self.source_number = source_number
+        self.acs_connection_string = acs_connection_string
+        self.acs_callback_path = acs_callback_path
 
-    base_url = os.environ.get("PUBLIC_BASE_URL")
+        base_url = os.environ.get("PUBLIC_BASE_URL")
 
-    websocket_url = f"{base_url}{acs_media_streaming_websocket_path}"
+        websocket_url = acs_media_streaming_websocket_path
 
-    self.media_streaming_configuration = MediaStreamingOptions(
-        transport_url=websocket_url,
-        transport_type=MediaStreamingTransportType.WEBSOCKET,
-        content_type=MediaStreamingContentType.AUDIO,
-        audio_channel_type=MediaStreamingAudioChannelType.MIXED,
-        start_media_streaming=True,
-        enable_bidirectional=True,
-        audio_format=AudioFormat.PCM24_K_MONO
-    )
+        self.media_streaming_configuration = MediaStreamingOptions(
+            transport_url=websocket_url,
+            transport_type=MediaStreamingTransportType.WEBSOCKET,
+            content_type=MediaStreamingContentType.AUDIO,
+            audio_channel_type=MediaStreamingAudioChannelType.MIXED,
+            start_media_streaming=True,
+            enable_bidirectional=True,
+            audio_format=AudioFormat.PCM16_K_MONO
+        )
+    
     
     async def initiate_call(self, target_number: str):
         self.call_automation_client = CallAutomationClient.from_connection_string(self.acs_connection_string)
