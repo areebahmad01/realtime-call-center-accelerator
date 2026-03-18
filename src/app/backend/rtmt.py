@@ -181,8 +181,12 @@ class RTMiddleTier:
                     session["tools"] = [tool.schema for tool in self.tools.values()]
                     data["session"] = session
 
-            await server_ws.send_str(json.dumps(data))
-
+            if isinstance(data, list):
+                for msg in data:
+                    await server_ws.send_str(json.dumps(msg))
+            else:
+                 await server_ws.send_str(json.dumps(data))
+                
     async def forward_messages(self, ws: web.WebSocketResponse, is_acs_audio_stream: bool):
         async with aiohttp.ClientSession(base_url=self.endpoint) as session:
             params = { "api-version": "2024-10-01-preview", "deployment": self.deployment }
