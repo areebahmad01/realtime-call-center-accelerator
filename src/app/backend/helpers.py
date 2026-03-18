@@ -20,21 +20,24 @@ def transform_acs_to_openai_format(msg_data: Any, model: Optional[str], tools: d
     # Initial message from Azure Communication Services.
     # Set the initial configuration for the OpenAI Realtime API by sending a session.update message.
     if msg_data["kind"] == "AudioMetadata":
-        oai_message = {
-            "type": "session.update",
-            "session": {
-                "voice": voice,
-                "tool_choice": "auto" if len(tools) > 0 else "none",
-                "tools": [tool.schema for tool in tools.values()],
-                "turn_detection": {
-                    "type": 'server_vad',
-                    "threshold": 0.7, # Adjust if necessary
-                    "prefix_padding_ms": 300, # Adjust if necessary
-                    "silence_duration_ms": 500 # Adjust if necessary
-                },
+        return[
+            {
+                "type": "session.update",
+                "session": {
+                    "voice": voice,
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.7,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 500
+                    },
+                    "instructions": "You are a speech-to-text bridge. Do not answer questions."
+                }
+            },
+            {
+                "type": "response.create"
             }
-        }
-
+        ]
         if system_message is not None:
             oai_message["session"]["instructions"] = system_message
         if temperature is not None:
