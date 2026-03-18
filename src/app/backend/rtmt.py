@@ -7,6 +7,7 @@ from azure.identity import DefaultAzureCredential, AzureDeveloperCliCredential, 
 from azure.core.credentials import AzureKeyCredential
 from backend.tools.tools import RTToolCall, Tool, ToolResultDirection
 from backend.helpers import transform_acs_to_openai_format, transform_openai_to_acs_format
+from backend.foundry import call_foundry_agent
 
 class RTMiddleTier:
     endpoint: str
@@ -113,21 +114,27 @@ class RTMiddleTier:
                         message = None
 
                 case "response.done":
-                    if len(self._tools_pending) > 0:
-                        self._tools_pending.clear() # Any chance tool calls could be interleaved across different outstanding responses?
-                        await server_ws.send_json({
-                            "type": "response.create"
-                        })
+                    outputs = message["response"]["output"]
+                    user_text = None
 
-                    if "response" in message:
-                        replace = False
-                        outputs = message["response"]["output"]
-                        for output in reversed(outputs):
-                            if output["type"] == "function_call":
-                                outputs.remove(output)
-                                replace = True
-                        if replace:
-                            message = json.loads(json.dumps(message)) # TODO: This is a hack to make the message a dict again. Find out, what 'replace' does
+                    for output in outputs:
+                        if output["type"] == "message":
+                            for content in output["content"]:
+                                if content["type"] == "output_text":
+                                    user_text = content["text"]
+                    if user_text:
+                        print("User said:", user_text)
+                        agent_response = await call_foundry_agent(user_text)   
+                        print("Agent response:", agent_response)
+                        await server_ws.send_json({
+                            "type": "response.create",
+                            "response": {
+                                "modalities": ["audio", "text"],
+                                "instructions": agent_response
+                                }
+                            })
+                    return 
+                   # TODO: This is a hack to make the message a dict again. Find out, what 'replace' does
 
                 # This happens when OpenAI detects, that the user starts speaking and won't continue to speak and send audio.
                 # In this case, we don't want to send the unplayed audio buffer to the client anymore.
