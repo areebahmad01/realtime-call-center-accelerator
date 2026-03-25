@@ -20,6 +20,8 @@ class AcsCaller:
         # NEW CONFIGS
         self.foundry_webhook_url = os.environ.get("FOUNDRY_WEBHOOK_URL")
         self.cognitive_services_endpoint = os.environ.get("COGNITIVE_SERVICES_ENDPOINT")
+        self.cognitive_services_endpoint_key = os.environ.get("COGNITIVE_SERVICES_ENDPOINT_KEY")
+        
 
         if not self.foundry_webhook_url:
             raise ValueError("FOUNDRY_WEBHOOK_URL not set")
@@ -42,7 +44,7 @@ class AcsCaller:
             target_participant=target,
             callback_url=self.acs_callback_path,
             source_caller_id_number=source,
-            cognitive_services_endpoint=self.cognitive_services_endpoint  # ✅ IMPORTANT
+            cognitive_services_endpoint=f"{self.cognitive_services_endpoint};{self.cognitive_services_endpoint_key}" # ✅ IMPORTANT
         )
 
     # ==========================================
@@ -127,7 +129,7 @@ class AcsCaller:
                 ).answer_call(
                     incoming_call_context,
                     self.acs_callback_path,
-                    cognitive_services_endpoint=self.cognitive_services_endpoint
+                    cognitive_services_endpoint=f"{self.cognitive_services_endpoint};{self.cognitive_services_endpoint_key}"
                 )
 
                 print("Incoming call answered")
