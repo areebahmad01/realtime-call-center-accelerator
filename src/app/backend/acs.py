@@ -1,110 +1,187 @@
 from aiohttp import web
-from azure.core.messaging import CloudEvent
-from azure.eventgrid import EventGridEvent
 import os
+import asyncio
+import httpx
+
 from azure.communication.callautomation import (
     CallAutomationClient,
     PhoneNumberIdentifier,
-    MediaStreamingOptions,
-    MediaStreamingTransportType,
-    MediaStreamingContentType,
-    MediaStreamingAudioChannelType,
-    AudioFormat)
+    TextSource,
+    RecognizeInputType
+)
 
 class AcsCaller:
-    source_number: str
-    acs_connection_string: str
-    acs_callback_path: str
-    websocket_url: str
-    media_streaming_configuration: MediaStreamingOptions
-
-    def __init__(self, source_number:str, acs_connection_string: str, acs_callback_path: str, acs_media_streaming_websocket_path: str):
+    def __init__(self, source_number: str, acs_connection_string: str, acs_callback_path: str, _unused_ws_path: str):
 
         self.source_number = source_number
         self.acs_connection_string = acs_connection_string
         self.acs_callback_path = acs_callback_path
 
-        base_url = os.environ.get("PUBLIC_BASE_URL")
+        # NEW CONFIGS
+        self.foundry_webhook_url = os.environ.get("FOUNDRY_WEBHOOK_URL")
+        self.cognitive_services_endpoint = os.environ.get("COGNITIVE_SERVICES_ENDPOINT")
 
-        if not base_url:
-            raise ValueError("PUBLIC_BASE_URL not set")
+        if not self.foundry_webhook_url:
+            raise ValueError("FOUNDRY_WEBHOOK_URL not set")
 
-        self.websocket_url = f"{base_url}{acs_media_streaming_websocket_path}"
+        if not self.cognitive_services_endpoint:
+            raise ValueError("COGNITIVE_SERVICES_ENDPOINT not set")
 
-        print("ACS Media Streaming URL:", self.websocket_url)
-
-        self.media_streaming_configuration = MediaStreamingOptions(
-            transport_url=self.websocket_url,
-            transport_type=MediaStreamingTransportType.WEBSOCKET,
-            content_type=MediaStreamingContentType.AUDIO,
-            audio_channel_type=MediaStreamingAudioChannelType.MIXED,
-            start_media_streaming=True,
-            enable_bidirectional=True,
-            audio_format=AudioFormat.PCM16_K_MONO
-        )
-    
+    # ==========================================
+    # OUTBOUND CALL
+    # ==========================================
     async def initiate_call(self, target_number: str):
-        self.call_automation_client = CallAutomationClient.from_connection_string(self.acs_connection_string)
-        self.target_participant = PhoneNumberIdentifier(target_number)
-        self.source_caller = PhoneNumberIdentifier(self.source_number)
-        self.call_automation_client.create_call(
-            self.target_participant, 
-            self.acs_callback_path,
-            media_streaming=self.media_streaming_configuration,
-            source_caller_id_number=self.source_caller
+        client = CallAutomationClient.from_connection_string(self.acs_connection_string)
+
+        target = PhoneNumberIdentifier(target_number)
+        source = PhoneNumberIdentifier(self.source_number)
+
+        print(f"Calling {target_number}...")
+
+        client.create_call(
+            target_participant=target,
+            callback_url=self.acs_callback_path,
+            source_caller_id_number=source,
+            cognitive_services_endpoint=self.cognitive_services_endpoint  # ✅ IMPORTANT
         )
 
-    async def answer_inbound_call(self, incoming_call_context: str):
-        self.call_automation_client = CallAutomationClient.from_connection_string(self.acs_connection_string)
-        self.call_automation_client.answer_call(
-            incoming_call_context,
-            self.acs_callback_path,
-            media_streaming=self.media_streaming_configuration
+    # ==========================================
+    # FOUNDRY CALL
+    # ==========================================
+    async def ask_foundry_agent(self, user_text: str, call_connection_id: str) -> str:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            payload = {
+                "languageCode": "en",
+                "fulfillmentInfo": {"tag": "call-foundry"},
+                "sessionInfo": {
+                    "session": f"sessions/{call_connection_id}",
+                    "parameters": {}
+                },
+                "text": user_text
+            }
+
+            try:
+                response = await client.post(self.foundry_webhook_url, json=payload)
+                response.raise_for_status()
+                data = response.json()
+
+                return data["fulfillment_response"]["messages"][0]["text"]["text"][0]
+
+            except Exception as e:
+                print("Foundry error:", str(e))
+                return "Sorry, I am having trouble right now."
+
+    async def process_and_respond(self, call_client, user_text, target_participant):
+        reply = await self.ask_foundry_agent(user_text, call_client._call_connection_id)
+
+        print("Agent reply:", reply)
+
+        tts = TextSource(
+            text=reply,
+            source_locale="en-US",
+            voice_name="en-US-JennyNeural"
         )
 
-    async def outbound_call_handler(self, request):
-        cloudevent = await request.json() 
-        for event_dict in cloudevent:
-            event = CloudEvent.from_dict(event_dict)
-            if event.data is None:
-                continue
-                
-            call_connection_id = event.data['callConnectionId']
-            print(f"{event.type} event received for call connection id: {call_connection_id}")
+        try:
+            call_client.start_recognizing_media(
+                input_type=RecognizeInputType.SPEECH,
+                target_participant=target_participant,
+                play_prompt=tts,
+                interrupt_prompt=True,
+                initial_silence_timeout=15,
+                end_silence_timeout=2,
+                speech_language="en-US"
+            )
+        except Exception as e:
+            print("Speech error:", e)
 
-            if event.type == "Microsoft.Communication.CallConnected":
-                print("Call connected")            
-
-        return web.Response(status=200)
-
+    # ==========================================
+    # INBOUND + OUTBOUND EVENT HANDLER (UNIFIED)
+    # ==========================================
     async def inbound_call_handler(self, request):
-        # Check if this is an Event Grid validation request
+        # 🔹 Event Grid validation
         if request.headers.get('aeg-event-type') == 'SubscriptionValidation':
             data = await request.json()
-            validation_code = data[0]['data']['validationCode']
             return web.json_response({
-                'validationResponse': validation_code
+                'validationResponse': data[0]['data']['validationCode']
             })
 
-        # Handle incoming call events
-        try:
-            event_data = await request.json()
-            print(f"Received event data: {event_data}")
-            
-            # EventGrid sends events in an array
-            for event_dict in event_data:
-                print(f"Processing event: {event_dict}")
-                event_type = event_dict.get("eventType") or event_dict.get("type")
-                
-                if event.event_type == "Microsoft.Communication.IncomingCall":
-                    print(f"Incoming call event data: {event.data}")
-                    incoming_call_context = event.data['incomingCallContext']
-                    await self.answer_inbound_call(incoming_call_context)
-                    print("Incoming call answered")
-                    return web.Response(status=200)
-                
-        except Exception as e:
-            print(f"Error handling inbound call: {str(e)}")
-            return web.Response(status=500, text=str(e))
+        events = await request.json()
+
+        for event in events:
+            event_type = event.get("eventType") or event.get("type")
+            data = event.get("data", {})
+
+            call_id = data.get("callConnectionId")
+
+            print(f"Event: {event_type}, Call ID: {call_id}")
+
+            # ==========================================
+            # INCOMING CALL
+            # ==========================================
+            if event_type == "Microsoft.Communication.IncomingCall":
+                incoming_call_context = data["incomingCallContext"]
+
+                CallAutomationClient.from_connection_string(
+                    self.acs_connection_string
+                ).answer_call(
+                    incoming_call_context,
+                    self.acs_callback_path,
+                    cognitive_services_endpoint=self.cognitive_services_endpoint
+                )
+
+                print("Incoming call answered")
+
+            # ==========================================
+            # CALL CONNECTED (BOTH INBOUND + OUTBOUND)
+            # ==========================================
+            elif event_type == "Microsoft.Communication.CallConnected":
+                call_client = CallAutomationClient.from_connection_string(
+                    self.acs_connection_string
+                ).get_call_connection(call_id)
+
+                target = PhoneNumberIdentifier(self.source_number)
+
+                greeting = TextSource(
+                    text="Hello! I am your AI assistant. How can I help you today?",
+                    source_locale="en-US",
+                    voice_name="en-US-JennyNeural"
+                )
+
+                call_client.start_recognizing_media(
+                    input_type=RecognizeInputType.SPEECH,
+                    target_participant=target,
+                    play_prompt=greeting,
+                    interrupt_prompt=True,
+                    initial_silence_timeout=10,
+                    end_silence_timeout=2
+                )
+
+                print("Greeting sent, listening...")
+
+            # ==========================================
+            # USER SPOKE
+            # ==========================================
+            elif event_type == "Microsoft.Communication.RecognizeCompleted":
+                if data.get("recognitionType") == "speech":
+                    user_text = data.get("speechResult", {}).get("speech")
+
+                    print("User said:", user_text)
+
+                    call_client = CallAutomationClient.from_connection_string(
+                        self.acs_connection_string
+                    ).get_call_connection(call_id)
+
+                    target = PhoneNumberIdentifier(self.source_number)
+
+                    asyncio.create_task(
+                        self.process_and_respond(call_client, user_text, target)
+                    )
+
+            # ==========================================
+            # FAIL SAFE
+            # ==========================================
+            elif event_type == "Microsoft.Communication.RecognizeFailed":
+                print("Recognition failed, retrying...")
 
         return web.Response(status=200)
